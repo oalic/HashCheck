@@ -116,18 +116,6 @@
     <None Include="HashCheck.def">
       <Filter>Source Files</Filter>
     </None>
-    <None Include="libs\BLAKE3\blake3_avx2_x86-64_windows_msvc.asm">
-      <Filter>Libraries\Blake3</Filter>
-    </None>
-    <None Include="libs\BLAKE3\blake3_avx512_x86-64_windows_msvc.asm">
-      <Filter>Libraries\Blake3</Filter>
-    </None>
-    <None Include="libs\BLAKE3\blake3_sse2_x86-64_windows_msvc.asm">
-      <Filter>Libraries\Blake3</Filter>
-    </None>
-    <None Include="libs\BLAKE3\blake3_sse41_x86-64_windows_msvc.asm">
-      <Filter>Libraries\Blake3</Filter>
-    </None>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="CHashCheck.hpp">
@@ -216,5 +204,22 @@
     <ResourceCompile Include="HashCheckTranslations.rc">
       <Filter>Resource Files</Filter>
     </ResourceCompile>
+  </ItemGroup>
+  <ItemGroup>
+    <MASM Include="libs\BLAKE3\blake3_avx2_x86-64_windows_msvc.asm" />
+    <MASM Include="libs\BLAKE3\blake3_avx512_x86-64_windows_msvc.asm" />
+    <MASM Include="libs\BLAKE3\blake3_sse2_x86-64_windows_msvc.asm" />
+    <MASM Include="libs\BLAKE3\blake3_sse41_x86-64_windows_msvc.asm" />
+  </ItemGroup>
+  <ItemGroup>
+    <Manifest Include="HashCheck.manifest" />
+  </ItemGroup>
+  <ItemGroup>
+    <Image Include="HashCheck.ico">
+      <Filter>Resource Files</Filter>
+    </Image>
+    <Image Include="HashCheck.bmp">
+      <Filter>Resource Files</Filter>
+    </Image>
   </ItemGroup>
 </Project>

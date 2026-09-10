@@ -62,6 +62,16 @@ extern "C" BOOL WINAPI DllMain( HINSTANCE hInstance, DWORD dwReason, LPVOID lpRe
 		case DLL_PROCESS_ATTACH:
 			g_hModThisDll = hInstance;
 			g_cRefThisDll = 0;
+
+			#ifdef _DEBUG
+			{
+				TCHAR szDbg[MAX_PATH + 0x40];
+				TCHAR szPath[MAX_PATH << 1];
+				GetModuleFileName(hInstance, szPath, countof(szPath));
+				StringCchPrintf(szDbg, countof(szDbg), TEXT("HashCheck: DLL_PROCESS_ATTACH pid=%lu dll=%s"), GetCurrentProcessId(), szPath);
+				OutputDebugString(szDbg);
+			}
+			#endif
 			g_bActCtxCreated = FALSE;
 			g_hActCtx = INVALID_HANDLE_VALUE;
 
@@ -147,6 +157,14 @@ STDAPI DllGetClassObject( REFCLSID rclsid, REFIID riid, LPVOID *ppv )
 
 STDAPI DllRegisterServerEx( LPCTSTR lpszModuleName )
 {
+	#ifdef _DEBUG
+	{
+		TCHAR szDbg[MAX_PATH + 0x40];
+		StringCchPrintf(szDbg, countof(szDbg), TEXT("HashCheck: DllRegisterServerEx module=%s"), lpszModuleName);
+		OutputDebugString(szDbg);
+	}
+	#endif
+
 	HKEY hKey;
 	TCHAR szBuffer[MAX_PATH << 1];
 
@@ -340,6 +358,14 @@ BOOL WINAPI GetProgramFilesDirectory( LPTSTR lpszPath, UINT cchPath )
 
 HRESULT Install( BOOL bRegisterUninstaller, BOOL bCopyFile, BOOL bShowRebootPrompt )
 {
+	#ifdef _DEBUG
+	{
+		TCHAR szDbg[MAX_PATH + 0x40];
+		StringCchPrintf(szDbg, countof(szDbg), TEXT("HashCheck: Install(bRegisterUninstaller=%d bCopyFile=%d)"), bRegisterUninstaller, bCopyFile);
+		OutputDebugString(szDbg);
+	}
+	#endif
+
 	TCHAR szCurrentDllPath[MAX_PATH << 1];
 	GetModuleFileName(g_hModThisDll, szCurrentDllPath, countof(szCurrentDllPath));
 

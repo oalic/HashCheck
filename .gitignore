@@ -3,8 +3,8 @@
 *.vcxproj.user
 *.csproj.user
 *.suo
-/Bin
-/Obj
+Bin
+Obj
 /installer/*.exe
 /installer/*.exe.sha*
 /*.VC.db
@@ -13,3 +13,5 @@
 /UnitTests/bin
 /UnitTests/obj
 /UnitTests/vectors
+.vs
+.idea

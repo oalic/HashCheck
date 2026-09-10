@@ -89,6 +89,7 @@ typedef struct {
 	OPENFILENAME       ofn;          // struct used for the save dialog; this needs to persist
 	TCHAR              szFormat[20]; // output format for wnsprintf
 	UINT               obScratch;    // offset, in bytes, to the scratch, for update coalescing
+	UINT               iGroupId;     // next ListView group id for the HashProp results list
 	HASHCALCSCRATCH    scratch;      // scratch buffers
 } HASHCALCCONTEXT, *PHASHCALCCONTEXT;
 

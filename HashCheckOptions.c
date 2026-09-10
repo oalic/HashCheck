@@ -368,7 +368,7 @@ VOID WINAPI ChangeFont( HWND hWnd, POPTIONSCONTEXT poptctx )
 	cf.lStructSize = sizeof(cf);
 	cf.hwndOwner = hWnd;
 	cf.lpLogFont = &poptctx->popt->lfFont;
-	cf.Flags = CF_FIXEDPITCHONLY | CF_FORCEFONTEXIST | CF_INITTOLOGFONTSTRUCT | CF_SCREENFONTS;
+	cf.Flags = CF_FORCEFONTEXIST | CF_INITTOLOGFONTSTRUCT | CF_SCREENFONTS;
 
 	if (ChooseFont(&cf) && (hFont = CreateFontIndirect(&poptctx->popt->lfFont)))
 	{

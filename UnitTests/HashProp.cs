@@ -105,23 +105,46 @@ namespace UnitTests
             while (status.Name == "Progress")
                 System.Threading.Thread.Sleep(100);
 
-            // Verify the results
-            TextBox results = prop_window.Get<TextBox>(SearchCriteria.ByNativeProperty(
-                AutomationElement.AutomationIdProperty, IDC_RESULTS));
-            Assert.Equal(expected_results, results.BulkText, true, true, true);  // ignores case, line endings and whitespace changes
+            // Verify the results; the results ListView exposes the group
+            // headers, the list items and their cell values via UIA
+            AutomationElement results = prop_window.AutomationElement.FindFirst(
+                TreeScope.Descendants,
+                new PropertyCondition(AutomationElement.AutomationIdProperty, IDC_RESULTS));
+            Assert.NotNull(results);
+
+            System.Windows.Automation.GridPattern grid =
+                (System.Windows.Automation.GridPattern)results.GetCurrentPattern(
+                    System.Windows.Automation.GridPattern.Pattern);
+
+            string actual_results = "";
+            int row = 0;
+            foreach (AutomationElement child in results.FindAll(TreeScope.Descendants, Condition.TrueCondition))
+            {
+                if (child.Current.ControlType == ControlType.Group)
+                    actual_results += child.Current.Name + "\n";
+                else if (child.Current.ControlType == ControlType.ListItem)
+                {
+                    AutomationElement algorithm = grid.GetItem(row, 0);
+                    AutomationElement value = grid.GetItem(row, 1);
+                    actual_results += algorithm.Current.Name + ": " + value.Current.Name + "\n";
+                    ++row;
+                }
+            }
+
+            Assert.Equal(expected_results, actual_results, true, true, true);  // ignores case, line endings and whitespace changes
         }
 
 
         [Theory]
         [InlineData(
          "SHA256LongMsg.rsp-0000.dat", false,
-@"  File: SHA256LongMsg.rsp-0000.dat
+@"SHA256LongMsg.rsp-0000.dat
   CRC-32: 29154b1f
    SHA-1: a0f8b5c82a0ee5a9119251cd75c55c0ae350923d
- SHA-256: 3c593aa539fdcdae516cdf2f15000f6634185c88f505b39775fb9ab137a10aa2
- SHA-512: ae4b5efe9d7e301699dc03ec1bc1f60f83565be9a40d8e38c660a7f9463b22b1ed907f9f4024c9d0ba30c9c38ac12d8cc354d8c4539e63dd6f26a0ce9ce7b71a
+  SHA-256: 3c593aa539fdcdae516cdf2f15000f6634185c88f505b39775fb9ab137a10aa2
+  SHA-512: ae4b5efe9d7e301699dc03ec1bc1f60f83565be9a40d8e38c660a7f9463b22b1ed907f9f4024c9d0ba30c9c38ac12d8cc354d8c4539e63dd6f26a0ce9ce7b71a
 " + "\n",
-@"  File: SHA256LongMsg.rsp-0000.dat
+@"SHA256LongMsg.rsp-0000.dat
   CRC-32: 29154b1f
      MD5: 632250fa8b3f9d248e0d37044460a4b7
    SHA-1: a0f8b5c82a0ee5a9119251cd75c55c0ae350923d
@@ -135,13 +158,13 @@ XXH3-128: 9fb58db9dcee88bad6cdee9fb5e8229d
 " + "\n")]
         [InlineData(
          "SHA3_VeryLongMsg.dat", true,
-@"  File: SHA3_VeryLongMsg.dat
+@"SHA3_VeryLongMsg.dat
   CRC-32: 4ed80f64
    SHA-1: 6ca7cca8ac206ec5a82a612ee5d4ba6ac766d239
- SHA-256: 8716fbf9a5f8c4562b48528e2d3085b64c56b5d1169ccf3295ad03e805580676
- SHA-512: 421b072b4fda96eb569ae55b8a9a5b4b5073a623649bd409dbb999e527372994b3a1a91f53c719837868c7fe11bba67640143255a3fbc5c895d2119274b0caff
+  SHA-256: 8716fbf9a5f8c4562b48528e2d3085b64c56b5d1169ccf3295ad03e805580676
+  SHA-512: 421b072b4fda96eb569ae55b8a9a5b4b5073a623649bd409dbb999e527372994b3a1a91f53c719837868c7fe11bba67640143255a3fbc5c895d2119274b0caff
 " + "\n",
-@"  File: SHA3_VeryLongMsg.dat
+@"SHA3_VeryLongMsg.dat
   CRC-32: 4ed80f64
      MD5: 1553faf40e3618f9b902c1e559552828
    SHA-1: 6ca7cca8ac206ec5a82a612ee5d4ba6ac766d239

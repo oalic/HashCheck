@@ -13,6 +13,7 @@
 #include "HashCheckCommon.h"
 #include "HashCalc.h"
 #include "libs/WinHash.h"
+#include <commctrl.h>
 #include <Strsafe.h>
 #include <assert.h>
 
@@ -54,6 +55,12 @@ LRESULT CALLBACK HashPropEditProc( HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM l
 LRESULT CALLBACK HashPropResultsProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam);
 VOID WINAPI HashPropUpdateResults( PHASHPROPCONTEXT phpctx, PHASHPROPITEM pItem );
 VOID WINAPI HashPropFinalStatus( PHASHPROPCONTEXT phpctx );
+
+// Results list view
+VOID WINAPI HashPropSizeListColumn( HWND hWndResults );
+VOID WINAPI HashPropListClear( HWND hWndResults );
+VOID WINAPI HashPropListAddFile( PHASHPROPCONTEXT phpctx, PHASHPROPITEM pItem );
+VOID WINAPI HashPropCopySelection( HWND hWnd );
 
 // Dialog commands
 VOID WINAPI HashPropFindText( PHASHPROPCONTEXT phpctx, BOOL bIncremental );
@@ -235,6 +242,15 @@ INT_PTR CALLBACK HashPropDlgProc( HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lP
 			break;
 		}
 
+		case WM_SIZE:
+		{
+			phpctx = (PHASHPROPCONTEXT)GetWindowLongPtr(hWnd, DWLP_USER);
+			if (phpctx)
+				HashPropSizeListColumn(GetDlgItem(hWnd, IDC_RESULTS));
+
+			break;
+		}
+
 		case WM_ENDSESSION:
         {
             if (wParam == FALSE)  // if TRUE, fall through to WM_DESTROY
@@ -322,23 +338,6 @@ INT_PTR CALLBACK HashPropDlgProc( HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lP
 				{
 					HashPropOptions(phpctx);
 					return(TRUE);
-				}
-
-				case IDC_RESULTS:
-				{
-					if (HIWORD(wParam) == EN_ALIGN_RTL_EC)
-					{
-						// Do not allow the textbox to go into RTL; unfortunately,
-						// we get this notification only if the order was changed
-						// by a keyboard shortcut, not if it was changed by the
-						// context menu--in fact, no notification of any sort
-						// is sent when it is changed by the context menu, which
-						// seems like it may be a bug in Windows.
-						HashPropForceLTR((HWND)lParam);
-						return(TRUE);
-					}
-
-					break;
 				}
 			}
 
@@ -456,9 +455,20 @@ LRESULT CALLBACK HashPropResultsProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM
             return(0);
         }
     }
-    else if (uMsg == WM_CHAR && wParam == 1)  // CTRL-a
+    else if (uMsg == WM_CHAR && wParam == 1)  // CTRL-a: select all items
     {
-        SendMessage(hWnd, EM_SETSEL, 0, -1);
+        LVITEM lvi;
+
+        ZeroMemory(&lvi, sizeof(lvi));
+        lvi.stateMask = LVIS_SELECTED;
+        lvi.state = LVIS_SELECTED;
+        SendMessage(hWnd, LVM_SETITEMSTATE, (WPARAM)-1, (LPARAM)&lvi);
+
+        return(1);
+    }
+    else if (uMsg == WM_COPY || (uMsg == WM_CHAR && wParam == 3))  // CTRL-c: copy
+    {
+        HashPropCopySelection(hWnd);
 
         return(1);
     }
@@ -491,16 +501,43 @@ VOID WINAPI HashPropDlgInit( PHASHPROPCONTEXT phpctx )
     phpctx->opt.dwFlags = HCOF_FONT | HCOF_CHECKSUMS;
     OptionsLoad(&phpctx->opt);
 
-	// Initialize the results text box
+	// Initialize the results list view
 	{
 		// Set the font
 		if (phpctx->hFont = CreateFontIndirect(&phpctx->opt.lfFont))
 			SendDlgItemMessage(hWnd, IDC_RESULTS, WM_SETFONT, (WPARAM)phpctx->hFont, FALSE);
+        HWND hWndResults = GetDlgItem(hWnd, IDC_RESULTS);
 
-		// Eliminate the text limit
-		SendDlgItemMessage(hWnd, IDC_RESULTS, EM_SETLIMITTEXT, 0, 0);
+		// Set the extended view styles and enable grouping
+		SendMessage(hWndResults, LVM_SETEXTENDEDLISTVIEWSTYLE,
+			(WPARAM)LVS_EX_FULLROWSELECT | LVS_EX_LABELTIP | LVS_EX_DOUBLEBUFFER,
+			(LPARAM)LVS_EX_FULLROWSELECT | LVS_EX_LABELTIP | LVS_EX_DOUBLEBUFFER);
+		SendMessage(hWndResults, LVM_ENABLEGROUPVIEW, TRUE, 0);
 
-        // Subclass it to handle CTRL-a
+		// Insert the algorithm and value columns
+		{
+			LVCOLUMN lvc;
+			TCHAR szColAlg[32];
+			TCHAR szColVal[32];
+
+			ZeroMemory(&lvc, sizeof(lvc));
+			lvc.mask = LVCF_TEXT | LVCF_WIDTH | LVCF_SUBITEM;
+			lvc.iSubItem = 0;
+			lvc.cx = 200;
+			LoadString(g_hModThisDll, IDS_HP_COL_ALGORITHM, szColAlg, countof(szColAlg));
+			lvc.pszText = szColAlg;
+			SendMessage(hWndResults, LVM_INSERTCOLUMN, 0, (LPARAM)&lvc);
+
+			ZeroMemory(&lvc, sizeof(lvc));
+			lvc.mask = LVCF_TEXT | LVCF_WIDTH | LVCF_SUBITEM;
+			lvc.iSubItem = 1;
+			lvc.cx = 300;
+			LoadString(g_hModThisDll, IDS_HP_COL_VALUE, szColVal, countof(szColVal));
+			lvc.pszText = szColVal;
+			SendMessage(hWndResults, LVM_INSERTCOLUMN, 1, (LPARAM)&lvc);
+		}
+
+        // Subclass it to handle CTRL-a, copy and escape
         phpctx->wpResultsBox = (WNDPROC)SetWindowLongPtr(
             GetDlgItem(hWnd, IDC_RESULTS),
             GWLP_WNDPROC,
@@ -525,6 +562,7 @@ VOID WINAPI HashPropDlgInit( PHASHPROPCONTEXT phpctx )
 		phpctx->cTotal = 0;
 		phpctx->cSuccess = 0;
 		phpctx->obScratch = 0;
+		phpctx->iGroupId = 0;
         phpctx->hThread = NULL;
         phpctx->hUnpauseEvent = NULL;
         phpctx->hFileOut = INVALID_HANDLE_VALUE;
@@ -625,6 +663,8 @@ VOID WINAPI HashPropFitDialog( HWND hWnd )
 			             0, 0, SWP_NOSIZE | SWP_NOZORDER);
 		}
 	}
+
+	HashPropSizeListColumn(GetDlgItem(hWnd, IDC_RESULTS));
 }
 
 VOID WINAPI HashPropForceLTR( HWND hWndEdit )
@@ -632,6 +672,251 @@ VOID WINAPI HashPropForceLTR( HWND hWndEdit )
 	DWORD dwExStyle = (DWORD)GetWindowLongPtr(hWndEdit, GWL_EXSTYLE);
 	dwExStyle &= ~(WS_EX_RIGHT | WS_EX_RTLREADING | WS_EX_LEFTSCROLLBAR);
 	SetWindowLongPtr(hWndEdit, GWL_EXSTYLE, dwExStyle);
+}
+
+
+
+/*============================================================================*\
+	Results list view
+\*============================================================================*/
+
+VOID WINAPI HashPropSizeListColumn( HWND hWndResults )
+{
+	RECT rc;
+	INT cx, cxAlg, cxHeader;
+
+	GetClientRect(hWndResults, &rc);
+
+	// Algorithm column: double the wider of the header or the item text, so
+	// it never clips regardless of the loaded font
+	SendMessage(hWndResults, LVM_SETCOLUMNWIDTH, 0, (LPARAM)LVSCW_AUTOSIZE);
+	cxAlg = (INT)SendMessage(hWndResults, LVM_GETCOLUMNWIDTH, 0, 0);
+	SendMessage(hWndResults, LVM_SETCOLUMNWIDTH, 0, (LPARAM)LVSCW_AUTOSIZE_USEHEADER);
+	cxHeader = (INT)SendMessage(hWndResults, LVM_GETCOLUMNWIDTH, 0, 0);
+	if (cxHeader > cxAlg)
+		cxAlg = cxHeader;
+	cxAlg *= 2;
+	if (cxAlg < 16)
+		cxAlg = 16;
+
+	// The value column takes the remaining space
+	cx = rc.right - rc.left - GetSystemMetrics(SM_CXVSCROLL) - cxAlg;
+	if (cx < 16)
+	{
+		cxAlg += cx - 16;
+		cx = 16;
+	}
+
+	SendMessage(hWndResults, LVM_SETCOLUMNWIDTH, 0, (LPARAM)cxAlg);
+	SendMessage(hWndResults, LVM_SETCOLUMNWIDTH, 1, (LPARAM)cx);
+}
+
+VOID WINAPI HashPropListClear( HWND hWndResults )
+{
+	SendMessage(hWndResults, LVM_DELETEALLITEMS, 0, 0);
+	SendMessage(hWndResults, LVM_REMOVEALLGROUPS, 0, 0);
+}
+
+static PCTSTR HashPropSkipLeadingSpaces( PCTSTR psz )
+{
+	while (*psz == TEXT(' '))
+		++psz;
+	return(psz);
+}
+
+static BOOL WINAPI HashPropGetItemText( HWND hWndResults, INT iItem, INT iSubItem,
+                                        PTSTR pszText, INT cchTextMax )
+{
+	LVITEM lvi;
+
+	ZeroMemory(&lvi, sizeof(lvi));
+	lvi.iSubItem = iSubItem;
+	lvi.cchTextMax = cchTextMax;
+	lvi.pszText = pszText;
+
+	return((BOOL)SendMessage(hWndResults, LVM_GETITEMTEXT,
+	                         (WPARAM)iItem, (LPARAM)&lvi));
+}
+
+VOID WINAPI HashPropListAddFile( PHASHPROPCONTEXT phpctx, PHASHPROPITEM pItem )
+{
+	HWND hWndResults = GetDlgItem(phpctx->hWnd, IDC_RESULTS);
+	LVGROUP lvg;
+	LVITEM lvi;
+
+	assert(phpctx->opt.dwChecksums != 0);
+
+	// Insert a group header for this file, containing just the file name
+	{
+		PCTSTR pszPath = pItem->szPath + phpctx->cchPrefix;
+		SIZE_T cchPath = pItem->cchPath - phpctx->cchPrefix;
+		PCTSTR pszLeaf = pszPath + cchPath;
+		SIZE_T cchLeaf;
+
+		while (pszLeaf > pszPath && pszLeaf[-1] != TEXT('\\') && pszLeaf[-1] != TEXT('/'))
+			--pszLeaf;
+
+		cchLeaf = cchPath - (SIZE_T)(pszLeaf - pszPath);
+		memcpy(phpctx->scratch.szW, pszLeaf, cchLeaf * sizeof(TCHAR));
+		phpctx->scratch.szW[cchLeaf] = 0;
+
+		ZeroMemory(&lvg, sizeof(lvg));
+		lvg.cbSize = sizeof(lvg);
+		lvg.mask = LVGF_GROUPID | LVGF_HEADER;
+		lvg.iGroupId = (INT)phpctx->iGroupId;
+		lvg.pszHeader = phpctx->scratch.szW;
+		lvg.cchHeader = (INT)cchLeaf + 1;
+		SendMessage(hWndResults, LVM_INSERTGROUP, (WPARAM)-1, (LPARAM)&lvg);
+	}
+
+	// Insert one item per enabled checksum
+	ZeroMemory(&lvi, sizeof(lvi));
+	lvi.mask = LVIF_TEXT | LVIF_GROUPID;
+	lvi.iItem = (INT)SendMessage(hWndResults, LVM_GETITEMCOUNT, 0, 0);
+	lvi.iSubItem = 0;
+	lvi.iGroupId = (INT)phpctx->iGroupId;
+
+#define HASH_PROP_INSERT_item(alg)                                                  \
+    if (phpctx->opt.dwChecksums & WHEX_CHECK##alg)                                  \
+    {                                                                               \
+        INT iIndex;                                                                 \
+        LVITEM lviValue;                                                            \
+        lvi.iItem = (INT)SendMessage(hWndResults, LVM_GETITEMCOUNT, 0, 0);          \
+        lvi.pszText = (PTSTR)HashPropSkipLeadingSpaces(HASH_RNAME_##alg);           \
+        iIndex = (INT)SendMessage(hWndResults, LVM_INSERTITEM,                      \
+                                  (WPARAM)-1, (LPARAM)&lvi);                        \
+        if (iIndex >= 0)                                                            \
+        {                                                                           \
+            ZeroMemory(&lviValue, sizeof(lviValue));                                \
+            lviValue.mask = LVIF_TEXT;                                              \
+            lviValue.iItem = iIndex;                                                \
+            lviValue.iSubItem = 1;                                                  \
+            lviValue.cchTextMax = -1;                                               \
+            lviValue.pszText = pItem->results.szHex##alg;                           \
+            SendMessage(hWndResults, LVM_SETITEMTEXT,                               \
+                        (WPARAM)iIndex, (LPARAM)&lviValue);                         \
+        }                                                                           \
+    }
+	FOR_EACH_HASH(HASH_PROP_INSERT_item)
+
+	++phpctx->iGroupId;
+}
+
+static BOOL WINAPI HashPropCopyAppend( PTSTR *ppszBuffer, SIZE_T *pcbCapacity,
+                                       SIZE_T *pcchUsed, PCTSTR pszText, SIZE_T cchText )
+{
+	SIZE_T cchAdd = cchText + CCH_CRLF;
+
+	if (*pcchUsed + cchAdd + 1 > *pcbCapacity)
+	{
+		SIZE_T cbNew = (*pcbCapacity) * 2;
+		PTSTR pszNew;
+
+		while (*pcchUsed + cchAdd + 1 > cbNew)
+			cbNew *= 2;
+
+		pszNew = (PTSTR)realloc(*ppszBuffer, cbNew * sizeof(TCHAR));
+		if (!pszNew)
+			return(FALSE);
+
+		*ppszBuffer = pszNew;
+		*pcbCapacity = cbNew;
+	}
+
+	memcpy(*ppszBuffer + *pcchUsed, pszText, cchText * sizeof(TCHAR));
+	memcpy(*ppszBuffer + *pcchUsed + cchText, CRLF, CCH_CRLF * sizeof(TCHAR));
+	*pcchUsed += cchAdd;
+	(*ppszBuffer)[*pcchUsed] = 0;
+
+	return(TRUE);
+}
+
+VOID WINAPI HashPropCopySelection( HWND hWnd )
+{
+	INT iItem, cItems = (INT)SendMessage(hWnd, LVM_GETITEMCOUNT, 0, 0);
+	INT iPrevGroup = -1;
+	TCHAR szHeader[MAX_PATH_BUFFER + MAX_STRINGRES];
+	TCHAR szAlg[MAX_STRINGRES];
+	TCHAR szValue[2 * MAX_DIGEST_STRING_LENGTH];
+	TCHAR szLine[2 * MAX_DIGEST_STRING_LENGTH + MAX_STRINGRES];
+	SIZE_T cbCapacity = 0x2000;
+	SIZE_T cchUsed = 0;
+	PTSTR pszBuffer = (PTSTR)malloc(cbCapacity * sizeof(TCHAR));
+
+	if (!pszBuffer)
+		return;
+
+	pszBuffer[0] = 0;
+
+	for (iItem = 0; iItem < cItems; ++iItem)
+	{
+		LVITEM lvi;
+		LVGROUP lvg;
+
+		if (!(UINT)SendMessage(hWnd, LVM_GETITEMSTATE, (WPARAM)iItem, (LPARAM)LVIS_SELECTED))
+			continue;
+
+		// Emit the file header whenever the group changes
+		ZeroMemory(&lvi, sizeof(lvi));
+		lvi.iItem = iItem;
+		lvi.iSubItem = 0;
+		lvi.mask = LVIF_GROUPID;
+		if (!SendMessage(hWnd, LVM_GETITEM, 0, (LPARAM)&lvi))
+			continue;
+
+		if (lvi.iGroupId != iPrevGroup)
+		{
+			ZeroMemory(&lvg, sizeof(lvg));
+			lvg.cbSize = sizeof(lvg);
+			lvg.mask = LVGF_GROUPID | LVGF_HEADER;
+			lvg.iGroupId = lvi.iGroupId;
+			lvg.pszHeader = szHeader;
+			lvg.cchHeader = countof(szHeader);
+
+			if (SendMessage(hWnd, LVM_GETGROUPINFO, lvi.iGroupId, (LPARAM)&lvg))
+			{
+				if (!HashPropCopyAppend(&pszBuffer, &cbCapacity, &cchUsed,
+				                       lvg.pszHeader, SSLen(lvg.pszHeader)))
+					goto cleanup;
+			}
+
+			iPrevGroup = lvi.iGroupId;
+		}
+
+		if (HashPropGetItemText(hWnd, iItem, 0, szAlg, (INT)countof(szAlg)) &&
+			HashPropGetItemText(hWnd, iItem, 1, szValue, (INT)countof(szValue)))
+		{
+			StringCchPrintf(szLine, countof(szLine), _T("%s: %s"), szAlg, szValue);
+
+			if (!HashPropCopyAppend(&pszBuffer, &cbCapacity, &cchUsed,
+			                       szLine, SSLen(szLine)))
+				goto cleanup;
+		}
+	}
+
+	if (cchUsed && OpenClipboard(hWnd))
+	{
+		HGLOBAL hGlobal = GlobalAlloc(GMEM_MOVEABLE, (cchUsed + 1) * sizeof(TCHAR));
+
+		if (hGlobal)
+		{
+			PTSTR pszClip = (PTSTR)GlobalLock(hGlobal);
+
+			if (pszClip)
+			{
+				memcpy(pszClip, pszBuffer, (cchUsed + 1) * sizeof(TCHAR));
+				GlobalUnlock(hGlobal);
+			}
+
+			if (EmptyClipboard())
+				SetClipboardData(CF_UNICODETEXT, hGlobal);
+		}
+
+		CloseClipboard();
+	}
+
+cleanup:
+	free(pszBuffer);
 }
 
 
@@ -658,15 +943,9 @@ VOID WINAPI HashPropUpdateResults( PHASHPROPCONTEXT phpctx, PHASHPROPITEM pItem 
 	 *    handled is completed; therefore, zero means no pending backlog.
 	 * 2) If there are more than 50 backlogged updates, the worker thread
 	 *    will throttle back enough to keep the backlog <= 50.
-	 * 3) If there is any backlog at all, results will be coalesced into
-	 *    batches to reduce the number of costly EM_REPLACESEL calls.
-	 * INVARIANT: the scratch buffer into which the results are coalesced
-	 *    has at least enough remaining space for adding the text results
-	 *    of a single file (it is cleared before returning if necessary)
+	 * 3) Unlike the old Edit box, the ListView inserts results immediately
+	 *    (they are much cheaper to insert than EM_REPLACESEL replacements)
 	 **/
-
-	PTSTR pszScratchAppend;
-    size_t cchMaxBufferRequired = 0;  // max tchar count for text results of one file
 
     // Check to see of any desired hashes are not present in the results
     if (phpctx->opt.dwChecksums & ~pItem->results.dwFlags)
@@ -676,63 +955,8 @@ VOID WINAPI HashPropUpdateResults( PHASHPROPCONTEXT phpctx, PHASHPROPITEM pItem 
 		// Otherwise, we can increment the success count
 		++phpctx->cSuccess;
 
-	// Get the scratch buffer; we will be using the entire scratch struct
-	// as a single monolithic buffer
-    pszScratchAppend = BYTEADD(&phpctx->scratch, phpctx->obScratch);
-
-	// Copy the file label
-	pszScratchAppend += LoadString(g_hModThisDll, IDS_HP_FILELABEL,
-		                           pszScratchAppend, MAX_STRINGRES);
-    cchMaxBufferRequired += MAX_STRINGRES;
-
-	// Copy the path, appending CRLF
-    pszScratchAppend = SSChainNCpy2(
-        pszScratchAppend,
-        pItem->szPath + phpctx->cchPrefix, pItem->cchPath - phpctx->cchPrefix,
-        CRLF, CCH_CRLF
-    );
-    cchMaxBufferRequired += MAX_PATH_BUFFER - phpctx->cchPrefix + CCH_CRLF;
-
-    // Copy the results
-    PTSTR pszScratchBeforeResults = pszScratchAppend;
-#define HASH_RESULT_APPEND_op(alg)                                              \
-    if (phpctx->opt.dwChecksums & WHEX_CHECK##alg)                              \
-        pszScratchAppend = SSChainNCpy3(                                        \
-            pszScratchAppend,                                                   \
-            HASH_RESULT_op(alg), sizeof(HASH_RESULT_op(alg))/sizeof(TCHAR) - 1, /* the "- 1" excludes the terminating NUL */ \
-            pItem->results.szHex##alg, alg##_DIGEST_LENGTH * 2,                 \
-            CRLF, CCH_CRLF                                                      \
-        );
-    FOR_EACH_HASH(HASH_RESULT_APPEND_op)
-    cchMaxBufferRequired += pszScratchAppend - pszScratchBeforeResults;  // always the same length
-
-#ifndef _TIMED
-    // Append CRLF and a terminating NUL
-    pszScratchAppend = SSChainNCpy(
-        pszScratchAppend,
-        CRLF _T("\0"), CCH_CRLF + 1
-    );
-    cchMaxBufferRequired += CCH_CRLF + 1;
-    pszScratchAppend--;  // it now points to the terminating NUL
-#else
-    StringCchPrintfEx(pszScratchAppend, 30, &pszScratchAppend, NULL, 0, _T("Elapsed: %d ms") CRLF CRLF, pItem->dwElapsed);
-    cchMaxBufferRequired += 30;
-#endif
-
-	// Update the new buffer offset for use by the next update
-	phpctx->obScratch = (UINT)BYTEDIFF(pszScratchAppend, &phpctx->scratch);
-
-	// Determine if we can skip flushing the buffer
-	if ( phpctx->cSentMsgs > phpctx->cHandledMsgs &&
-		 phpctx->obScratch + (cchMaxBufferRequired * sizeof(TCHAR)) <= sizeof(HASHPROPSCRATCH) )
-	{
-		return;
-	}
-
-	// Flush the buffer to the text box
-	phpctx->obScratch = 0;
-	SendMessage(hWndResults, EM_SETSEL, -2, -2);
-	SendMessage(hWndResults, EM_REPLACESEL, FALSE, (LPARAM)&phpctx->scratch);
+	// Insert the group and its items into the results ListView
+	HashPropListAddFile(phpctx, pItem);
 
 	// ClearType will sometimes leave artifacts, so redraw if the user will
 	// be looking at this text for a while
@@ -797,45 +1021,85 @@ VOID WINAPI HashPropFindText( PHASHPROPCONTEXT phpctx, BOOL bIncremental )
 
 	SIZE_T cchNeedle = SendMessage(hWndSearch, WM_GETTEXTLENGTH, 0, 0);
 	PTSTR pszNeedle = SLSetContextSize(phpctx->hList, ((UINT)cchNeedle + 1) * sizeof(TCHAR));
-	PTSTR pszHaystack;
-	PTSTR pszFound = NULL;
-
-	DWORD dwPos;
-
-	if (bIncremental)
-		SendMessage(hWndResults, EM_GETSEL, (WPARAM)&dwPos, (LPARAM)NULL);
-	else
-		SendMessage(hWndResults, EM_GETSEL, (WPARAM)NULL, (LPARAM)&dwPos);
+	INT iItem, iStart, cItems = (INT)SendMessage(hWndResults, LVM_GETITEMCOUNT, 0, 0);
+	INT iFound = -1;
+	TCHAR szText[MAX_PATH_BUFFER + MAX_STRINGRES];
 
 	if (pszNeedle && SendMessage(hWndSearch, WM_GETTEXT, cchNeedle + 1, (LPARAM)pszNeedle))
 	{
-		HLOCAL hResults = (HLOCAL)SendMessage(hWndResults, EM_GETHANDLE, 0, 0);
-
 		// Dangling whitespace should not affect search results
 		StrTrim(pszNeedle, TEXT(" \t\r\n"));
 		cchNeedle = SSLen(pszNeedle);
+	}
 
-		if (cchNeedle && hResults && (pszHaystack = LocalLock(hResults)))
+	if (cchNeedle == 0)
+	{
+		if (bIncremental)
+			return;
+	}
+	else
+	{
+		// Continue the search from the current selection
+		iStart = (INT)SendMessage(hWndResults, LVM_GETNEXTITEM,
+		                         (WPARAM)-1, (LPARAM)(LVNI_FOCUSED | LVNI_SELECTED));
+
+		if (iStart >= 0)
 		{
-			pszFound = StrStrI(pszHaystack + dwPos, pszNeedle);
-			if (!pszFound) pszFound = StrStrI(pszHaystack, pszNeedle);
-
-			if (pszFound)
+			for (iItem = iStart + 1; iItem < cItems; ++iItem)
 			{
-				dwPos = (DWORD)(pszFound - pszHaystack);
-				SendMessage(hWndResults, EM_SETSEL, dwPos, dwPos + cchNeedle);
-				SendMessage(hWndResults, EM_SCROLLCARET, 0, 0);
+				if ((HashPropGetItemText(hWndResults, iItem, 0, szText, (INT)countof(szText)) &&
+						StrStrI(szText, pszNeedle)) ||
+					(HashPropGetItemText(hWndResults, iItem, 1, szText, (INT)countof(szText)) &&
+						StrStrI(szText, pszNeedle)))
+				{
+					iFound = iItem;
+					break;
+				}
 			}
 
-			LocalUnlock(hResults);
+			if (iFound < 0)
+			{
+				for (iItem = 0; iItem <= iStart; ++iItem)
+				{
+					if ((HashPropGetItemText(hWndResults, iItem, 0, szText, (INT)countof(szText)) &&
+							StrStrI(szText, pszNeedle)) ||
+						(HashPropGetItemText(hWndResults, iItem, 1, szText, (INT)countof(szText)) &&
+							StrStrI(szText, pszNeedle)))
+					{
+						iFound = iItem;
+						break;
+					}
+				}
+			}
+		}
+		else
+		{
+			for (iItem = 0; iItem < cItems; ++iItem)
+			{
+				if ((HashPropGetItemText(hWndResults, iItem, 0, szText, (INT)countof(szText)) &&
+						StrStrI(szText, pszNeedle)) ||
+					(HashPropGetItemText(hWndResults, iItem, 1, szText, (INT)countof(szText)) &&
+						StrStrI(szText, pszNeedle)))
+				{
+					iFound = iItem;
+					break;
+				}
+			}
+		}
+
+		if (iFound >= 0)
+		{
+			LVITEM lvi;
+
+			ZeroMemory(&lvi, sizeof(lvi));
+			lvi.stateMask = LVIS_FOCUSED | LVIS_SELECTED;
+			lvi.state = LVIS_FOCUSED | LVIS_SELECTED;
+			SendMessage(hWndResults, LVM_SETITEMSTATE, (WPARAM)iFound, (LPARAM)&lvi);
+			SendMessage(hWndResults, LVM_ENSUREVISIBLE, (WPARAM)iFound, FALSE);
 		}
 	}
 
-	if (cchNeedle == 0 && bIncremental)
-	{
-		SendMessage(hWndResults, EM_SETSEL, dwPos, dwPos);
-	}
-	else if (!pszFound)
+	if (iFound < 0 && cchNeedle != 0)
 	{
 		TCHAR szBuffer[MAX_STRINGMSG];
 
@@ -1023,7 +1287,7 @@ VOID WINAPI HashPropRestart( PHASHPROPCONTEXT phpctx )
     EnableControl( phpctx->hWnd, IDC_PROG_FILE,  TRUE);
     EnableControl( phpctx->hWnd, IDC_PAUSE,      TRUE);
     EnableControl( phpctx->hWnd, IDC_STOP,       TRUE);
-    SetDlgItemText(phpctx->hWnd, IDC_RESULTS,    TEXT(""));
+    HashPropListClear(GetDlgItem(phpctx->hWnd, IDC_RESULTS));
     SetControlText(phpctx->hWnd, IDC_STATUSBOX,  IDS_HP_STATUSBOX);
     SetControlText(phpctx->hWnd, IDC_PAUSE,      IDS_HC_PAUSE);
     SetProgressBarPause((PCOMMONCONTEXT)phpctx,  PBST_NORMAL);
@@ -1032,6 +1296,7 @@ VOID WINAPI HashPropRestart( PHASHPROPCONTEXT phpctx )
 
     phpctx->cSuccess = 0;
     phpctx->obScratch = 0;
+    phpctx->iGroupId = 0;
 
     phpctx->hThread = CreateThreadCRT(NULL, phpctx);
 

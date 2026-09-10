@@ -35,6 +35,8 @@
 #define IDS_HP_SAVE                     0x4306
 #define IDS_HP_OPTIONS                  0x4307
 #define IDS_HP_FILELABEL                0x4308
+#define IDS_HP_COL_ALGORITHM            0x4309
+#define IDS_HP_COL_VALUE                0x430A
 
 #define IDS_HV_LOADERROR_FMT            0x4400
 #define IDS_HV_MENUTEXT                 0x440F
